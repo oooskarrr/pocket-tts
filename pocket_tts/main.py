@@ -5,12 +5,15 @@ import tempfile
 import threading
 from pathlib import Path
 from queue import Queue
+from typing import Optional
 
 import typer
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Security, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
 from typing_extensions import Annotated
 
 from pocket_tts.data.audio import stream_audio_chunks
@@ -28,6 +31,34 @@ from pocket_tts.utils.logging_utils import enable_logging
 from pocket_tts.utils.utils import PREDEFINED_VOICES, size_of_dict
 
 logger = logging.getLogger(__name__)
+
+# Security for API key authentication
+security = HTTPBearer(auto_error=False)
+API_KEY = os.getenv("API_KEY")
+
+
+class TTSRequest(BaseModel):
+    """Request model for TTS generation."""
+
+    text: str
+    voice_url: Optional[str] = None
+
+
+class TTSErrorResponse(BaseModel):
+    """Error response model."""
+
+    detail: str
+
+
+def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Verify API key if configured."""
+    if API_KEY is not None:
+        if credentials is None:
+            raise HTTPException(status_code=401, detail="API key required")
+        if credentials.credentials != API_KEY:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+    return True
+
 
 cli_app = typer.Typer(
     help="Kyutai Pocket TTS - Text-to-Speech generation tool", pretty_exceptions_show_locals=False
@@ -163,6 +194,54 @@ def text_to_speech(
 
     return StreamingResponse(
         generate_data_with_state(text, model_state),
+        media_type="audio/wav",
+        headers={
+            "Content-Disposition": "attachment; filename=generated_speech.wav",
+            "Transfer-Encoding": "chunked",
+        },
+    )
+
+
+@web_app.get("/favicon.ico")
+async def favicon():
+    """Serve the favicon."""
+    favicon_path = Path(__file__).parent / "static" / "favicon.ico"
+    return FileResponse(favicon_path)
+
+
+@web_app.post("/v1/audio/synthesize", status_code=200)
+def synthesize_audio(request: TTSRequest, authenticated: bool = Depends(verify_api_key)):
+    """
+    Generate speech from text using the pre-loaded voice prompt or a custom voice.
+
+    This is a JSON-based API endpoint for programmatic access.
+
+    Args:
+        request: TTSRequest with text and optional voice_url
+    """
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    # Use the appropriate model state
+    if request.voice_url is not None:
+        voice_url = request.voice_url
+        if not (
+            voice_url.startswith("http://")
+            or voice_url.startswith("https://")
+            or voice_url.startswith("hf://")
+            or voice_url in PREDEFINED_VOICES
+        ):
+            raise HTTPException(
+                status_code=400, detail="voice_url must start with http://, https://, or hf://"
+            )
+        model_state = tts_model._cached_get_state_for_audio_prompt(voice_url, truncate=True)
+        logging.warning("Using voice from URL: %s", voice_url)
+    else:
+        # Use default global model state
+        model_state = global_model_state
+
+    return StreamingResponse(
+        generate_data_with_state(request.text, model_state),
         media_type="audio/wav",
         headers={
             "Content-Disposition": "attachment; filename=generated_speech.wav",
