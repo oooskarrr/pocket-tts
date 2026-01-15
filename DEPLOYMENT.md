@@ -149,6 +149,19 @@ To automatically deploy when you push changes:
 3. Add it as a webhook in your Git repository settings
 4. Every push will trigger a new deployment
 
+## Technical Details
+
+### Network Binding Solution
+
+Pocket TTS by default binds to `localhost` (127.0.0.1) when running the `serve` command. This works fine for local development but prevents Dokploy's reverse proxy (Traefik) from accessing the service.
+
+**Solution**: The `docker-compose.yml` uses `socat` (a networking utility) to create a bridge:
+- The app runs on `localhost:8000` (internal to container)
+- `socat` forwards traffic from `0.0.0.0:8080` → `localhost:8000`
+- Dokploy/Traefik connects to port 8080 on `0.0.0.0` (accessible interface)
+
+This happens automatically during container startup - no manual configuration needed!
+
 ## Troubleshooting
 
 ### Slow First Deployment
@@ -156,6 +169,7 @@ To automatically deploy when you push changes:
 The first deployment will take several minutes because:
 - It downloads the base Docker image
 - Installs all Python dependencies (including PyTorch)
+- Installs `socat` for network forwarding
 - Downloads model weights from HuggingFace Hub (~200MB)
 - Pre-processes the default voice prompt
 
@@ -175,13 +189,45 @@ If you encounter OOM errors:
 
 ### Port Conflicts
 
-If port 8000 is already in use:
-1. Modify the `ports` section in `docker-compose.yml`:
+If port 8080 is already in use:
+1. Modify the `ports` and `socat` forward command in `docker-compose.yml`:
    ```yaml
    ports:
      - 9000  # Change to another port
+   command: >
+     /bin/sh -c "
+     apt-get update && apt-get install -y socat &&
+     (socat TCP-LISTEN:9000,fork,bind=0.0.0.0 TCP:127.0.0.1:8000 &) &&
+     exec uv run pocket-tts serve
+     "
    ```
-2. Update the Dokploy domain configuration if using Traefik labels
+2. Update the Dokploy domain configuration to point to the new port
+
+### Service Deploys But Not Accessible / No Logs
+
+If your deployment shows as "successful" but:
+- You cannot access the service through the domain
+- Logs show NO activity at all (not even health checks)
+- Container appears to be running
+
+**Root Cause**: The app is binding to `localhost` (127.0.0.1) inside the container, which Dokploy's reverse proxy cannot reach.
+
+**Fix Applied**: This repository already includes the fix using `socat` in the `docker-compose.yml`. Make sure:
+1. You're deploying from a branch that includes the socat configuration
+2. The `dokploy-network` is properly configured (it should be external)
+3. Your domain in Dokploy is configured to point to port 8080 (the port socat listens on)
+
+To verify the fix is working, check the logs - you should see:
+```
+Setting up socat...
+Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+...
+Selecting previously unselected package socat.
+...
+INFO:     Started server process...
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+```
 
 ## Advanced Configuration
 

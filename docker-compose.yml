@@ -7,11 +7,22 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - 8000
+      - 8080
     volumes:
       - pocket-tts-cache:/root/.cache/pocket_tts
     environment:
       - PYTHONUNBUFFERED=1
+    networks:
+      - dokploy-network
+    # Install socat and forward traffic from 0.0.0.0:8080 to localhost:8000
+    # This is needed because pocket-tts defaults to binding on localhost (127.0.0.1)
+    # and Dokploy needs the service accessible on 0.0.0.0
+    command: >
+      /bin/sh -c "
+      apt-get update && apt-get install -y socat &&
+      (socat TCP-LISTEN:8080,fork,bind=0.0.0.0 TCP:127.0.0.1:8000 &) &&
+      exec uv run pocket-tts serve
+      "
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -21,3 +32,7 @@ services:
 
 volumes:
   pocket-tts-cache:
+
+networks:
+  dokploy-network:
+    external: true
