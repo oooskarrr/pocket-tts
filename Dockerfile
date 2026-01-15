@@ -1,5 +1,8 @@
 FROM ghcr.io/astral-sh/uv:debian
 
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY ./pyproject.toml .
 COPY ./uv.lock .

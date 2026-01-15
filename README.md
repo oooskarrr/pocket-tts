@@ -121,9 +121,17 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed Dokploy deployment instruction
 You can also run with Docker directly:
 
 ```bash
+# Build the image
 docker build -t pocket-tts .
-docker run -p 8000:8000 pocket-tts
+
+# Run with host binding (required for external access)
+docker run -p 8000:8000 pocket-tts uv run pocket-tts serve --host 0.0.0.0
+
+# Or use the docker-compose setup (includes socat forwarding for Dokploy)
+docker compose up
 ```
+
+**Note:** When using `docker-compose.yml`, the service binds to `0.0.0.0:8000` (accessible from outside the container) for Dokploy deployment. See [DEPLOYMENT.md](./DEPLOYMENT.md) for details.
 
 ## Unsupported features
 

@@ -12,8 +12,13 @@ services:
       - pocket-tts-cache:/root/.cache/pocket_tts
     environment:
       - PYTHONUNBUFFERED=1
+    networks:
+      - dokploy-network
+    # Override the default CMD to bind to 0.0.0.0 instead of localhost
+    # This makes the service accessible from outside the container for Dokploy
+    command: ["uv", "run", "pocket-tts", "serve", "--host", "0.0.0.0"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -21,3 +26,7 @@ services:
 
 volumes:
   pocket-tts-cache:
+
+networks:
+  dokploy-network:
+    external: true

@@ -149,12 +149,26 @@ To automatically deploy when you push changes:
 3. Add it as a webhook in your Git repository settings
 4. Every push will trigger a new deployment
 
+## Technical Details
+
+### Network Binding Solution
+
+Pocket TTS by default binds to `localhost` (127.0.0.1) when running the `serve` command. This works fine for local development but prevents Dokploy's reverse proxy (Traefik) from accessing the service.
+
+**Solution**: The `docker-compose.yml` overrides the default command to add `--host 0.0.0.0`:
+- The app runs on `0.0.0.0:8000` (accessible from outside the container)
+- Dokploy/Traefik connects directly to port 8000
+- No additional forwarding tools needed
+
+This happens automatically during container startup - no manual configuration needed!
+
 ## Troubleshooting
 
 ### Slow First Deployment
 
 The first deployment will take several minutes because:
 - It downloads the base Docker image
+- Installs curl for health checks
 - Installs all Python dependencies (including PyTorch)
 - Downloads model weights from HuggingFace Hub (~200MB)
 - Pre-processes the default voice prompt
@@ -176,12 +190,53 @@ If you encounter OOM errors:
 ### Port Conflicts
 
 If port 8000 is already in use:
-1. Modify the `ports` section in `docker-compose.yml`:
+1. Modify the `ports` and `command` in `docker-compose.yml`:
    ```yaml
    ports:
      - 9000  # Change to another port
+   command: ["uv", "run", "pocket-tts", "serve", "--host", "0.0.0.0", "--port", "9000"]
    ```
-2. Update the Dokploy domain configuration if using Traefik labels
+2. Update the health check to use the new port
+3. Update the Dokploy domain configuration to point to the new port
+
+### Service Deploys But Not Accessible / No Logs / Container Shows "Unhealthy"
+
+If your deployment shows as "successful" but:
+- You cannot access the service through the domain (404 errors)
+- Container status shows "Unhealthy"
+- Logs show the app is running but no traffic is being routed
+
+**Root Causes**:
+1. **Network binding issue**: The app is binding to `localhost` (127.0.0.1) inside the container
+2. **Health check failure**: The health check is failing, causing Traefik to mark the container as unhealthy and not route traffic to it
+
+**Fixes Applied**: This repository includes both fixes:
+
+1. **Network binding**: Pass `--host 0.0.0.0` to the serve command in `docker-compose.yml`
+2. **Health check**: Use `curl` instead of `python` for health checks (python isn't in PATH in uv-based containers)
+
+To verify the fixes are working:
+
+**1. Check container logs** - you should see:
+```
+INFO:     Started server process [XX]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+```
+Note: The host must show `0.0.0.0` not `localhost` or `127.0.0.1`.
+
+**2. Check container health** - after 60 seconds (start_period), the container should show as "healthy":
+```bash
+docker ps
+# Look for the pocket-tts container - it should show "(healthy)" not "(unhealthy)"
+```
+
+**3. Check health check logs** - there should be no errors:
+```bash
+docker inspect <container-id> | grep -A 20 Health
+# Should show successful health checks with ExitCode: 0
+```
 
 ## Advanced Configuration
 
