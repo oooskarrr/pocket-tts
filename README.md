@@ -131,7 +131,7 @@ docker run -p 8000:8000 pocket-tts uv run pocket-tts serve --host 0.0.0.0
 docker compose up
 ```
 
-**Note:** When using `docker-compose.yml`, the service exposes port 8080 (uses socat to forward to internal port 8000). This is specifically designed for Dokploy deployment. See [DEPLOYMENT.md](./DEPLOYMENT.md) for details.
+**Note:** When using `docker-compose.yml`, the service binds to `0.0.0.0:8000` (accessible from outside the container) for Dokploy deployment. See [DEPLOYMENT.md](./DEPLOYMENT.md) for details.
 
 ## Unsupported features
 

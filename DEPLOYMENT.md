@@ -155,10 +155,10 @@ To automatically deploy when you push changes:
 
 Pocket TTS by default binds to `localhost` (127.0.0.1) when running the `serve` command. This works fine for local development but prevents Dokploy's reverse proxy (Traefik) from accessing the service.
 
-**Solution**: The `docker-compose.yml` uses `socat` (a networking utility) to create a bridge:
-- The app runs on `localhost:8000` (internal to container)
-- `socat` forwards traffic from `0.0.0.0:8080` → `localhost:8000`
-- Dokploy/Traefik connects to port 8080 on `0.0.0.0` (accessible interface)
+**Solution**: The `docker-compose.yml` overrides the default command to add `--host 0.0.0.0`:
+- The app runs on `0.0.0.0:8000` (accessible from outside the container)
+- Dokploy/Traefik connects directly to port 8000
+- No additional forwarding tools needed
 
 This happens automatically during container startup - no manual configuration needed!
 
@@ -169,7 +169,6 @@ This happens automatically during container startup - no manual configuration ne
 The first deployment will take several minutes because:
 - It downloads the base Docker image
 - Installs all Python dependencies (including PyTorch)
-- Installs `socat` for network forwarding
 - Downloads model weights from HuggingFace Hub (~200MB)
 - Pre-processes the default voice prompt
 
@@ -189,19 +188,15 @@ If you encounter OOM errors:
 
 ### Port Conflicts
 
-If port 8080 is already in use:
-1. Modify the `ports` and `socat` forward command in `docker-compose.yml`:
+If port 8000 is already in use:
+1. Modify the `ports` and `command` in `docker-compose.yml`:
    ```yaml
    ports:
      - 9000  # Change to another port
-   command: >
-     /bin/sh -c "
-     apt-get update && apt-get install -y socat &&
-     (socat TCP-LISTEN:9000,fork,bind=0.0.0.0 TCP:127.0.0.1:8000 &) &&
-     exec uv run pocket-tts serve
-     "
+   command: ["uv", "run", "pocket-tts", "serve", "--host", "0.0.0.0", "--port", "9000"]
    ```
-2. Update the Dokploy domain configuration to point to the new port
+2. Update the health check to use the new port
+3. Update the Dokploy domain configuration to point to the new port
 
 ### Service Deploys But Not Accessible / No Logs
 
@@ -212,22 +207,20 @@ If your deployment shows as "successful" but:
 
 **Root Cause**: The app is binding to `localhost` (127.0.0.1) inside the container, which Dokploy's reverse proxy cannot reach.
 
-**Fix Applied**: This repository already includes the fix using `socat` in the `docker-compose.yml`. Make sure:
-1. You're deploying from a branch that includes the socat configuration
+**Fix Applied**: This repository includes the fix by passing `--host 0.0.0.0` to the serve command in `docker-compose.yml`. Make sure:
+1. You're deploying from a branch that includes the `--host 0.0.0.0` flag in the command
 2. The `dokploy-network` is properly configured (it should be external)
-3. Your domain in Dokploy is configured to point to port 8080 (the port socat listens on)
+3. Your domain in Dokploy is configured to point to port 8000
 
 To verify the fix is working, check the logs - you should see:
 ```
-Setting up socat...
-Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
-...
-Selecting previously unselected package socat.
-...
-INFO:     Started server process...
+INFO:     Started server process [XX]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
+
+Note the host should show `0.0.0.0` not `localhost` or `127.0.0.1`.
 
 ## Advanced Configuration
 

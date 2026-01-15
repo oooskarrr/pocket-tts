@@ -1,0 +1,107 @@
+====================================================================
+DOKPLOY DEPLOYMENT CHECKLIST - Pocket TTS
+====================================================================
+
+IMPORTANT: This is a SIMPLIFIED approach that replaces the socat 
+solution. It uses a simple CLI flag instead.
+
+====================================================================
+STEP 1: VERIFY CONFIGURATION
+====================================================================
+
+Before deploying, check your docker-compose.yml has:
+
+  ✓ Port: 8000 (NOT 8080)
+  ✓ Command: ["uv", "run", "pocket-tts", "serve", "--host", "0.0.0.0"]
+  ✓ Network: dokploy-network
+  ✓ Volume: pocket-tts-cache
+
+====================================================================
+STEP 2: DEPLOY IN DOKPLOY
+====================================================================
+
+1. Push this branch to your git repo
+2. In Dokploy, configure:
+   - Compose Path: ./docker-compose.yml
+   - Branch: fix-dokploy-docker-compose-socat-forward
+3. Add Domain:
+   - Your domain (e.g., tts.mydomain.com)
+   - Port: 8000 (critical - must be 8000, not 8080)
+4. Click Deploy
+
+====================================================================
+STEP 3: CHECK LOGS (MOST IMPORTANT!)
+====================================================================
+
+After deployment, go to Dokploy → Logs tab
+
+YOU MUST SEE THIS:
+  INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+                                       ^^^^^^^^^
+                                       THIS IS KEY!
+
+DO NOT SEE "localhost:8000" or "127.0.0.1:8000"
+If you see localhost instead of 0.0.0.0, the fix didn't work.
+
+====================================================================
+STEP 4: TEST THE SERVICE
+====================================================================
+
+Test 1: Health Check
+  curl https://tts.mydomain.com/health
+  Expected: {"status":"healthy"}
+
+Test 2: TTS Generation  
+  curl -X POST https://tts.mydomain.com/tts \
+    -F "text=Hello world" \
+    -F "voice_url=alba" \
+    --output test.wav
+
+Test 3: Verify Audio
+  file test.wav
+  Expected: RIFF (little-endian) data, WAVE audio
+
+====================================================================
+STEP 5: IF IT STILL DOESN'T WORK
+====================================================================
+
+Symptom: Logs show "localhost:8000" instead of "0.0.0.0:8000"
+Fix: The command override isn't working. Check:
+     - Are you deploying the correct branch?
+     - Does Dokploy's preview-compose show the command array?
+     - Try redeploying with "Rebuild" option
+
+Symptom: 404 errors, but logs show 0.0.0.0:8000
+Fix: Traefik routing issue. Check:
+     - Is dokploy-network connected?
+     - Does domain point to port 8000 (not 8080)?
+     - Are Traefik labels present in preview-compose?
+     - Does DNS A record point to server IP?
+
+Symptom: No logs at all / Container won't start
+Fix: Build or startup issue. Check:
+     - Does server have enough RAM (~600MB needed)?
+     - Can server reach HuggingFace Hub for model downloads?
+     - Are there Python/dependency errors in build logs?
+
+====================================================================
+WHY THIS APPROACH WORKS
+====================================================================
+
+The pocket-tts CLI has a built-in --host flag that controls which
+network interface the server binds to:
+
+  --host localhost    → Only accessible inside container (DEFAULT)
+  --host 0.0.0.0      → Accessible from outside container (NEEDED)
+
+By passing --host 0.0.0.0 in the docker-compose command, we make
+the service accessible to Dokploy's Traefik reverse proxy.
+
+This is simpler than socat because:
+  • No extra packages to install
+  • No complex shell scripting
+  • Standard Docker practice
+  • Easy to verify in logs
+  • Uses documented CLI feature
+
+====================================================================

@@ -6,25 +6,25 @@ The Pocket TTS app was deploying "successfully" in Dokploy but was not accessibl
 
 ## Solution Applied
 
-Implemented a `socat`-based network forwarding solution that acts as a bridge between the public interface and the localhost-bound application.
+**Simple and Clean**: Pass `--host 0.0.0.0` flag to the `pocket-tts serve` command, making the service bind to all network interfaces instead of just localhost.
 
 ## Changes Made
 
 ### 1. docker-compose.yml
 
 **Key Changes:**
-- ✅ Changed exposed port from `8000` to `8080` (socat listen port)
+- ✅ Port remains `8000` (standard TTS port)
 - ✅ Added `dokploy-network` for Dokploy integration
-- ✅ Added custom `command` that:
-  1. Installs `socat` package
-  2. Starts socat in background to forward `0.0.0.0:8080` → `localhost:8000`
-  3. Starts the pocket-tts server on `localhost:8000`
-- ✅ Kept healthcheck pointing to `localhost:8000` (correct - checks the actual app)
+- ✅ Overridden default `command` to add `--host 0.0.0.0` flag:
+  ```yaml
+  command: ["uv", "run", "pocket-tts", "serve", "--host", "0.0.0.0"]
+  ```
+- ✅ Kept healthcheck pointing to `localhost:8000` (checks the actual app)
 - ✅ Named volumes for HuggingFace cache persistence
 
 **How It Works:**
 ```
-Dokploy/Traefik → 0.0.0.0:8080 (socat) → 127.0.0.1:8000 (pocket-tts)
+Dokploy/Traefik → 0.0.0.0:8000 (pocket-tts directly accessible)
 ```
 
 ### 2. DEPLOYMENT.md
@@ -32,8 +32,14 @@ Dokploy/Traefik → 0.0.0.0:8080 (socat) → 127.0.0.1:8000 (pocket-tts)
 **Enhancements:**
 - ✅ Added "Technical Details" section explaining the network binding solution
 - ✅ Added troubleshooting section for "Service Deploys But Not Accessible / No Logs"
-- ✅ Updated port references from 8000 to 8080
-- ✅ Added socat installation step to first deployment notes
+- ✅ Clarified that the service now binds to 0.0.0.0:8000
+- ✅ Added verification steps to check proper binding
+
+### 3. README.md
+
+**Updates:**
+- ✅ Updated Docker usage examples to show `--host 0.0.0.0` flag
+- ✅ Clarified that docker-compose.yml binds to 0.0.0.0:8000
 
 ## Deployment Instructions
 
@@ -48,30 +54,25 @@ Dokploy/Traefik → 0.0.0.0:8080 (socat) → 127.0.0.1:8000 (pocket-tts)
 4. **Add Domain** (in Domains tab):
    - Enter your domain (e.g., `tts.yourdomain.com`)
    - Dokploy auto-configures Traefik labels
-   - **Important:** Ensure domain points to port 8080
+   - **Important:** Ensure domain points to port 8000
 5. **Deploy** → Click Deploy button
 
-### Expected First Deployment Logs:
+### Expected Deployment Logs:
 
 ```
-Setting up socat...
-Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
-...
-Selecting previously unselected package socat.
-Unpacking socat...
-Setting up socat...
-...
 INFO:     Started server process [XX]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://127.0.0.1:8000
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
+
+**Key indicator:** The host should show `0.0.0.0` not `localhost` or `127.0.0.1`.
 
 ## Verification Steps
 
 After deployment, verify the fix is working:
 
-1. **Check Logs** → Should see socat installation and uvicorn startup
+1. **Check Logs** → Should see `Uvicorn running on http://0.0.0.0:8000`
 2. **Test Health Endpoint:**
    ```bash
    curl https://your-domain.com/health
@@ -89,33 +90,39 @@ After deployment, verify the fix is working:
 
 ### Alternative Approaches Considered:
 
-1. ❌ **Add `--host 0.0.0.0` flag** - Requires modifying application code or Dockerfile CMD
+1. ✅ **Add `--host 0.0.0.0` flag** - Clean, simple, uses built-in CLI option (CHOSEN)
 2. ❌ **Environment variables** - Typer CLI doesn't auto-read env vars for options
-3. ✅ **socat forwarding** - Works with ANY localhost-bound application, no code changes needed
+3. ❌ **socat forwarding** - Overly complex, requires installing extra packages, harder to debug
 
 ### Benefits:
 
-- ✅ No application code changes required
-- ✅ Works with the existing Docker image
-- ✅ Standard solution for "stubborn" apps that bind to localhost
-- ✅ Minimal overhead (socat is very lightweight)
-- ✅ Health checks still monitor the actual app (not socat)
+- ✅ Simple and straightforward - just one flag
+- ✅ Uses the app's built-in CLI option (documented feature)
+- ✅ No additional dependencies or packages needed
+- ✅ Easy to debug - logs clearly show which interface is bound
+- ✅ Standard Docker practice for server applications
+- ✅ Health checks still monitor the actual app directly
 
 ## Technical Notes
 
-- **Port 8080** is where socat listens (public interface)
-- **Port 8000** is where pocket-tts runs (localhost only)
-- **socat** runs in background with `fork` mode for concurrent connections
+- **Port 8000** is where pocket-tts runs (bound to 0.0.0.0 - all interfaces)
 - **dokploy-network** is external (created by Dokploy)
-- **Health checks** still target `localhost:8000` (the actual app)
+- **Health checks** still target `localhost:8000` (faster than external interface)
+- **Command override** replaces the default Dockerfile CMD
 
-## Support
+## Troubleshooting
 
 If you still encounter issues:
 
-1. Check Dokploy logs for socat installation errors
-2. Verify `dokploy-network` exists: `docker network ls`
-3. Ensure domain DNS A record points to your server
-4. Check Traefik routing configuration in Dokploy
+1. **Check the logs** - Verify you see `http://0.0.0.0:8000` not `http://localhost:8000`
+2. **Verify network** - Ensure `dokploy-network` exists: `docker network ls`
+3. **Check DNS** - Ensure domain A record points to your server IP
+4. **Verify Traefik** - Check Traefik routing configuration in Dokploy UI
+5. **Check port** - Ensure Dokploy domain is configured for port 8000
 
-For more details, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+## Support
+
+For more details, see:
+- [DEPLOYMENT.md](./DEPLOYMENT.md) - Full deployment guide
+- [README.md](./README.md) - Project documentation
+- [Dokploy Documentation](https://docs.dokploy.com) - Dokploy-specific help
