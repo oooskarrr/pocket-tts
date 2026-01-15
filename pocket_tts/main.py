@@ -40,8 +40,28 @@ API_KEY = os.getenv("API_KEY")
 class TTSRequest(BaseModel):
     """Request model for TTS generation."""
 
-    text: str
+    # Accept both 'input' (OpenAI format) and 'text' (our format) - 'text' takes precedence
+    text: Optional[str] = None
+    input: Optional[str] = None
     voice_url: Optional[str] = None
+    # OpenAI compatibility - allow but ignore these fields
+    model: Optional[str] = None
+    voice: Optional[str] = None
+    response_format: Optional[str] = None
+    speed: Optional[float] = 1.0
+
+    model_config = {"extra": "allow"}  # Allow extra fields for OpenAI compatibility
+
+    def get_text(self) -> str:
+        """Get the text to synthesize, with validation."""
+        result = self.text or self.input
+        if not result or not result.strip():
+            raise HTTPException(status_code=422, detail="Text input cannot be empty")
+        return result
+
+    def get_voice_url(self) -> Optional[str]:
+        """Get voice URL, handling both voice_url and voice fields."""
+        return self.voice_url or self.voice
 
 
 class TTSErrorResponse(BaseModel):
@@ -219,12 +239,18 @@ def synthesize_audio(request: TTSRequest, authenticated: bool = Depends(verify_a
     Args:
         request: TTSRequest with text and optional voice_url
     """
-    if not request.text.strip():
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    try:
+        text = request.get_text()
+        logging.info(
+            f"TTS request received: text='{text[:100]}...', voice_url={request.get_voice_url()}"
+        )
+    except Exception as e:
+        logging.error(f"Invalid request: {str(e)}")
+        raise
 
     # Use the appropriate model state
-    if request.voice_url is not None:
-        voice_url = request.voice_url
+    voice_url = request.get_voice_url()
+    if voice_url is not None:
         if not (
             voice_url.startswith("http://")
             or voice_url.startswith("https://")
@@ -241,7 +267,7 @@ def synthesize_audio(request: TTSRequest, authenticated: bool = Depends(verify_a
         model_state = global_model_state
 
     return StreamingResponse(
-        generate_data_with_state(request.text, model_state),
+        generate_data_with_state(text, model_state),
         media_type="audio/wav",
         headers={
             "Content-Disposition": "attachment; filename=generated_speech.wav",
