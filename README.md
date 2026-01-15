@@ -103,6 +103,28 @@ so we recommend to keep the model and voice states in memory if you can.
 
 You can check out the [Python API documentation](https://github.com/kyutai-labs/pocket-tts/tree/main/docs/python-api.md) for more details and examples.
 
+## Deployment with Docker
+
+### Using Dokploy (Recommended)
+
+For easy production deployment with Dokploy, we provide a Docker Compose configuration:
+
+```bash
+# The repository includes docker-compose.yml and .dockerignore
+# Simply add your repository to Dokploy and deploy
+```
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed Dokploy deployment instructions.
+
+### Manual Docker
+
+You can also run with Docker directly:
+
+```bash
+docker build -t pocket-tts .
+docker run -p 8000:8000 pocket-tts
+```
+
 ## Unsupported features
 
 At the moment, we do not support (but would love pull requests adding):
