@@ -168,6 +168,7 @@ This happens automatically during container startup - no manual configuration ne
 
 The first deployment will take several minutes because:
 - It downloads the base Docker image
+- Installs curl for health checks
 - Installs all Python dependencies (including PyTorch)
 - Downloads model weights from HuggingFace Hub (~200MB)
 - Pre-processes the default voice prompt
@@ -198,29 +199,44 @@ If port 8000 is already in use:
 2. Update the health check to use the new port
 3. Update the Dokploy domain configuration to point to the new port
 
-### Service Deploys But Not Accessible / No Logs
+### Service Deploys But Not Accessible / No Logs / Container Shows "Unhealthy"
 
 If your deployment shows as "successful" but:
-- You cannot access the service through the domain
-- Logs show NO activity at all (not even health checks)
-- Container appears to be running
+- You cannot access the service through the domain (404 errors)
+- Container status shows "Unhealthy"
+- Logs show the app is running but no traffic is being routed
 
-**Root Cause**: The app is binding to `localhost` (127.0.0.1) inside the container, which Dokploy's reverse proxy cannot reach.
+**Root Causes**:
+1. **Network binding issue**: The app is binding to `localhost` (127.0.0.1) inside the container
+2. **Health check failure**: The health check is failing, causing Traefik to mark the container as unhealthy and not route traffic to it
 
-**Fix Applied**: This repository includes the fix by passing `--host 0.0.0.0` to the serve command in `docker-compose.yml`. Make sure:
-1. You're deploying from a branch that includes the `--host 0.0.0.0` flag in the command
-2. The `dokploy-network` is properly configured (it should be external)
-3. Your domain in Dokploy is configured to point to port 8000
+**Fixes Applied**: This repository includes both fixes:
 
-To verify the fix is working, check the logs - you should see:
+1. **Network binding**: Pass `--host 0.0.0.0` to the serve command in `docker-compose.yml`
+2. **Health check**: Use `curl` instead of `python` for health checks (python isn't in PATH in uv-based containers)
+
+To verify the fixes are working:
+
+**1. Check container logs** - you should see:
 ```
 INFO:     Started server process [XX]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
+Note: The host must show `0.0.0.0` not `localhost` or `127.0.0.1`.
 
-Note the host should show `0.0.0.0` not `localhost` or `127.0.0.1`.
+**2. Check container health** - after 60 seconds (start_period), the container should show as "healthy":
+```bash
+docker ps
+# Look for the pocket-tts container - it should show "(healthy)" not "(unhealthy)"
+```
+
+**3. Check health check logs** - there should be no errors:
+```bash
+docker inspect <container-id> | grep -A 20 Health
+# Should show successful health checks with ExitCode: 0
+```
 
 ## Advanced Configuration
 

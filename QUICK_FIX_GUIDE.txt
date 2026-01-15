@@ -1,0 +1,102 @@
+================================================================================
+POCKET TTS DOKPLOY DEPLOYMENT - QUICK FIX GUIDE
+================================================================================
+
+THE PROBLEM:
+- Container deployed successfully
+- Logs showed: "INFO: Uvicorn running on http://0.0.0.0:8000"
+- But got 404 errors when accessing the domain
+- Container status showed "Unhealthy"
+
+THE ROOT CAUSE:
+Health check was failing because "python" command wasn't in PATH in the 
+uv-based Docker container. Traefik won't route traffic to unhealthy containers!
+
+THE FIX:
+1. Install curl in Dockerfile
+2. Use curl for health checks instead of python
+
+================================================================================
+WHAT WAS CHANGED
+================================================================================
+
+File: Dockerfile
+- Added: RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+File: docker-compose.yml
+- Changed health check from:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+  To:
+    test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+
+================================================================================
+DEPLOYMENT STEPS
+================================================================================
+
+1. Push changes to git repository
+2. In Dokploy, redeploy the service (it will rebuild with curl)
+3. Wait 60 seconds after "Docker Compose Deployed: ✅" message
+4. Check container health: docker ps
+5. Should show "(healthy)" not "(unhealthy)"
+6. Test: curl https://tts.omnilocal.de/health
+
+================================================================================
+VERIFICATION CHECKLIST
+================================================================================
+
+✓ Container logs show: "Uvicorn running on http://0.0.0.0:8000"
+✓ Container status shows: "Up X minutes (healthy)"
+✓ Health check has ExitCode: 0 (not -1)
+✓ Domain returns: {"status":"healthy"}
+✓ Web interface is accessible
+
+================================================================================
+WHY THIS WORKS
+================================================================================
+
+The --host 0.0.0.0 fix (previous attempt) WAS correct and working!
+The app was accessible on port 8000 from outside the container.
+
+BUT Traefik (the reverse proxy) checks if containers are "healthy" before
+routing traffic to them. Since the health check was failing, Traefik marked
+the container as unhealthy and refused to route traffic = 404 errors.
+
+Now with curl-based health checks:
+1. Container starts and binds to 0.0.0.0:8000 ✓
+2. Health check runs every 30s using curl ✓
+3. Container is marked "healthy" ✓
+4. Traefik routes traffic to the healthy container ✓
+5. Service is accessible! ✓
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+If container is still "unhealthy" after 2 minutes:
+
+1. Check health check logs:
+   docker inspect $(docker ps -q -f name=pocket-tts) | grep -A 30 Health
+
+2. Look for ExitCode: 0 (success) vs -1 (failure)
+
+3. If still failing, check if curl is installed:
+   docker exec $(docker ps -q -f name=pocket-tts) which curl
+   Should return: /usr/bin/curl
+
+4. Test health check manually:
+   docker exec $(docker ps -q -f name=pocket-tts) curl -f http://localhost:8000/health
+   Should return: {"status":"healthy"}
+
+If 404 errors persist even when container is healthy:
+
+1. Check Traefik labels:
+   docker inspect $(docker ps -q -f name=pocket-tts) | grep traefik
+
+2. Verify dokploy-network is connected:
+   docker inspect $(docker ps -q -f name=pocket-tts) | grep -A 10 Networks
+
+3. Check Traefik logs for routing errors
+
+4. Verify DNS points to your server IP
+
+================================================================================
